@@ -32,6 +32,7 @@ export function useVoiceInput(opts: UseVoiceInputOptions = {}): UseVoiceInputRet
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const accumulatedRef = useRef("");
+  const currentSessionFinalRef = useRef("");
   const intentionalStopRef = useRef(false);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasSpokenRef = useRef(false);
@@ -77,34 +78,41 @@ export function useVoiceInput(opts: UseVoiceInputOptions = {}): UseVoiceInputRet
     rec.lang = "en-US";
     rec.maxAlternatives = 1;
 
-    rec.onresult = (event) => {
-      let interim = "";
-      let final = "";
+    // We need to track the final text from the CURRENT session separately from
+    // the accumulated text from PREVIOUS sessions (since we restart onend).
+    // This prevents duplication issues on mobile where resultIndex can be flaky.
 
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+    rec.onresult = (event) => {
+      let sessionFinal = "";
+      let sessionInterim = "";
+
+      // Reconstruct the full transcript for this session from event.results
+      // We iterate from 0 to ensure we capture the browser's full current state
+      for (let i = 0; i < event.results.length; i++) {
         const text = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          final += text;
+          sessionFinal += text;
         } else {
-          interim += text;
+          sessionInterim += text;
         }
       }
 
-      if (final) {
-        accumulatedRef.current += " " + final;
-        setTranscript(accumulatedRef.current.trim());
-        hasSpokenRef.current = true;
-      }
+      // Normalize spaces
+      sessionFinal = sessionFinal.trim();
+      sessionInterim = sessionInterim.trim();
 
-      // Any speech activity (final or interim) resets the silence timer.
-      if (final || interim) {
-        hasSpokenRef.current = true;
-        startSilenceTimer();
-      }
+      // Update ref so onend can save it
+      currentSessionFinalRef.current = sessionFinal;
 
-      setInterimTranscript(
-        (accumulatedRef.current + " " + interim).trim(),
-      );
+      // Full transcript = Previous Sessions + Current Session Final
+      const fullFinal = (accumulatedRef.current + " " + sessionFinal).trim();
+      setTranscript(fullFinal);
+
+      // Interim Display = Full Final + Current Interim
+      setInterimTranscript((fullFinal + " " + sessionInterim).trim());
+
+      hasSpokenRef.current = true;
+      startSilenceTimer();
     };
 
     rec.onerror = (event) => {
@@ -118,6 +126,12 @@ export function useVoiceInput(opts: UseVoiceInputOptions = {}): UseVoiceInputRet
     };
 
     rec.onend = () => {
+      // Save valid final text from this session to accumulation
+      if (currentSessionFinalRef.current) {
+        accumulatedRef.current = (accumulatedRef.current + " " + currentSessionFinalRef.current).trim();
+        currentSessionFinalRef.current = ""; // Reset for next session
+      }
+
       if (!intentionalStopRef.current) {
         try {
           rec.start();
@@ -141,6 +155,7 @@ export function useVoiceInput(opts: UseVoiceInputOptions = {}): UseVoiceInputRet
       return;
     }
     accumulatedRef.current = "";
+    currentSessionFinalRef.current = "";
     intentionalStopRef.current = false;
     hasSpokenRef.current = false;
     setTranscript("");
