@@ -22,7 +22,7 @@ async def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
         _client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=5.0, read=30.0, write=5.0, pool=5.0),
+            timeout=httpx.Timeout(connect=5.0, read=120.0, write=5.0, pool=5.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             verify=False,  # Nominee Life API – skip cert verification for speed
         )

@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Avatar } from "./components/Avatar/Avatar";
 import { MicButton } from "./components/Controls/MicButton";
+import { KeyboardIcon, MicIcon, SendIcon } from "./components/UI/icons";
 import { Navbar } from "./components/Controls/Navbar";
 import { Sidebar, ChatSession } from "./components/Controls/Sidebar";
 import { AudioWaveform } from "./components/UI/AudioWaveform";
@@ -47,6 +48,10 @@ export default function App() {
 
     // Chat view state
     const [showChatView, setShowChatView] = useState(false);
+
+    // Input mode state
+    const [inputMode, setInputMode] = useState<'voice' | 'text'>('voice');
+    const [manualText, setManualText] = useState("");
 
     // Sidebar state
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -152,14 +157,21 @@ export default function App() {
             }));
 
             try {
-                const reply = await api.sendMessage(text, history);
-                if (!reply) {
-                    processingRef.current = false;
-                    return;
+                // Stream response: Update interimText to show progress immediately
+                const reply = await api.sendMessageStream(text, history, (partial) => {
+                    if (useChatStore.getState().status !== "speaking") {
+                        setStatus("speaking");
+                    }
+                    setInterimText(partial);
+                });
+
+                setInterimText(""); // Clear interim once done
+                addMessage("assistant", reply); // Add full message to history
+
+                // Now speak the full response
+                if (reply) {
+                    await tts.speak(reply);
                 }
-                addMessage("assistant", reply);
-                setStatus("speaking");
-                await tts.speak(reply);
                 setStatus("ready");
             } catch {
                 if (useChatStore.getState().status !== "ready") {
@@ -212,6 +224,16 @@ export default function App() {
         setInterimText("");
         setStatus("ready");
     }, [api, tts, voice, setStatus, setInterimText]);
+
+    const handleManualVoiceSend = useCallback((e?: React.MouseEvent) => {
+        e?.stopPropagation();
+        const final = voice.stopListening();
+        if (final.trim()) {
+            processTranscript(final);
+        } else {
+            handleCancel();
+        }
+    }, [voice, processTranscript, handleCancel]);
 
     /* ─── Session management ─── */
     const saveSessionsToStorage = useCallback((newSessions: ChatSession[]) => {
@@ -441,13 +463,56 @@ export default function App() {
                 {/* Avatar */}
                 <MemoAvatar isSpeaking={tts.isSpeaking} />
 
-                {/* Control Dock - Glassmorphism pill - Clickable */}
+                {/* Input Mode Toggle */}
                 <button
-                    type="button"
-                    id="mic-button"
-                    onClick={status === "ready" ? handleMicToggle : handleCancel}
-                    aria-label={status === "ready" ? "Start listening" : "Stop"}
+                    onClick={() => {
+                        if (inputMode === 'voice') {
+                            if (status === 'listening') {
+                                handleCancel();
+                            }
+                            setInputMode('text');
+                        } else {
+                            setInputMode('voice');
+                        }
+                    }}
                     className="
+                        h-10 px-4 rounded-full
+                        flex items-center gap-2
+                        bg-surface-100 dark:bg-white/10
+                        text-surface-600 dark:text-white/80
+                        hover:bg-surface-200 dark:hover:bg-white/20
+                        transition-colors
+                        text-sm font-medium
+                    "
+                >
+                    {inputMode === 'voice' ? (
+                        <>
+                            <KeyboardIcon size={18} />
+                            <span>Type</span>
+                        </>
+                    ) : (
+                        <>
+                            <MicIcon size={18} />
+                            <span>Voice</span>
+                        </>
+                    )}
+                </button>
+
+                {/* Control Dock */}
+                {inputMode === 'voice' ? (
+
+                    <div
+                        role="button"
+                        tabIndex={0}
+                        id="mic-button"
+                        onClick={status === "ready" ? handleMicToggle : handleCancel}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                                status === "ready" ? handleMicToggle() : handleCancel();
+                            }
+                        }}
+                        aria-label={status === "ready" ? "Start listening" : "Stop"}
+                        className="
                         relative flex items-center justify-center
                         w-80 h-32 px-8
                         rounded-3xl
@@ -460,41 +525,41 @@ export default function App() {
                         focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-accent/20
                         group
                     "
-                >
-                    {/* Hover Stop Overlay - only during active states */}
-                    {status !== "ready" && (
-                        <div className="
+                    >
+                        {/* Hover Stop Overlay - only during active states */}
+                        {status !== "ready" && (
+                            <div className="
                             absolute inset-0 z-20
                             flex items-center justify-center
                             bg-white/80 dark:bg-black/50 rounded-3xl
                             opacity-0 group-hover:opacity-100
                             transition-opacity duration-200
                         ">
-                            <div className="flex flex-col items-center gap-2">
-                                <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center">
-                                    <svg
-                                        className="w-6 h-6 text-red-600 dark:text-red-500"
-                                        fill="currentColor"
-                                        viewBox="0 0 24 24"
-                                    >
-                                        <rect x="6" y="6" width="12" height="12" rx="1" />
-                                    </svg>
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center">
+                                        <svg
+                                            className="w-6 h-6 text-red-600 dark:text-red-500"
+                                            fill="currentColor"
+                                            viewBox="0 0 24 24"
+                                        >
+                                            <rect x="6" y="6" width="12" height="12" rx="1" />
+                                        </svg>
+                                    </div>
+                                    <span className="text-sm text-red-600 dark:text-red-400 font-medium">Tap to Stop</span>
                                 </div>
-                                <span className="text-sm text-red-600 dark:text-red-400 font-medium">Tap to Stop</span>
                             </div>
-                        </div>
-                    )}
+                        )}
 
-                    {/* Status Text - Subtle & Clean */}
-                    <div className={`
+                        {/* Status Text - Subtle & Clean */}
+                        <div className={`
                 absolute bottom-32
                 transition-all duration-500 ease-out
                 ${tts.isSpeaking
-                            ? "opacity-0 translate-y-4"
-                            : "opacity-100 translate-y-0"
-                        }
+                                ? "opacity-0 translate-y-4"
+                                : "opacity-100 translate-y-0"
+                            }
             `}>
-                        <div className={`
+                            <div className={`
                     px-6 py-2.5 rounded-full
                     backdrop-blur-md
                     bg-white/40 dark:bg-white/5
@@ -502,124 +567,201 @@ export default function App() {
                     shadow-sm
                     flex items-center gap-2.5
                 `}>
-                            <div className={`
+                                <div className={`
                         w-2 h-2 rounded-full
                         ${status === "listening" ? "bg-red-500 animate-pulse" :
-                                    status === "thinking" ? "bg-blue-400 animate-bounce" :
-                                        status === "speaking" ? "bg-purple-500 animate-pulse" :
-                                            "bg-emerald-400"
-                                }
+                                        status === "thinking" ? "bg-blue-400 animate-bounce" :
+                                            status === "speaking" ? "bg-purple-500 animate-pulse" :
+                                                "bg-emerald-400"
+                                    }
                     `} />
-                            <span className="text-sm font-medium tracking-wide text-surface-800 dark:text-white/90">
-                                {status === "listening" ? "Listening..." :
-                                    status === "thinking" ? "Thinking..." :
-                                        status === "speaking" ? "Speaking..." :
-                                            "Ready to chat"
-                                }
-                            </span>
+                                <span className="text-sm font-medium tracking-wide text-surface-800 dark:text-white/90">
+                                    {status === "listening" ? "Listening..." :
+                                        status === "thinking" ? "Thinking..." :
+                                            status === "speaking" ? "Speaking..." :
+                                                "Ready to chat"
+                                    }
+                                </span>
+                            </div>
                         </div>
+
+                        {/* Interim Transcript (Live Speech to Text) */}
+                        {interimText && status === "listening" && (
+                            <div className="absolute bottom-48 w-full max-w-2xl px-4 text-center animate-fade-in-up">
+                                <p className="text-xl font-medium text-surface-900 dark:text-white/90 leading-relaxed drop-shadow-sm">
+                                    {interimText}
+                                </p>
+                            </div>
+                        )}
+
+                        <AnimatePresence mode="wait">
+                            {/* State A: Idle - Large mic button only */}
+                            {status === "ready" && (
+                                <motion.div
+                                    key="idle"
+                                    initial={{ opacity: 0, scale: 0.8 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.8 }}
+                                    transition={{ duration: 0.3 }}
+                                    className="flex items-center justify-center"
+                                >
+                                    <MicButton
+                                        isListening={false}
+                                        onClick={handleMicToggle}
+                                        disabled={false}
+                                    />
+                                </motion.div>
+                            )}
+
+                            {/* State B: Listening - Waveform + text */}
+                            {status === "listening" && (
+                                <motion.div
+                                    key="listening"
+                                    initial={{ opacity: 0, scale: 0.9 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.9 }}
+                                    transition={{ duration: 0.3 }}
+                                    className="flex flex-col items-center gap-2 group-hover:opacity-30 transition-opacity"
+                                >
+                                    <span className="text-sm text-surface-500 dark:text-white/70 font-medium">
+                                        Listening...
+                                    </span>
+                                    <div className="h-10 w-64 flex items-center justify-center relative">
+                                        <AudioWaveform isActive={true} color="#ef4444" />
+
+                                        {/* Manual Send Button */}
+                                        <button
+                                            onClick={handleManualVoiceSend}
+                                            className="
+                                                absolute right-4 top-1/2 -translate-y-1/2
+                                                p-3 rounded-full
+                                                bg-emerald-500 text-white
+                                                hover:bg-emerald-600
+                                                shadow-md
+                                                transition-all
+                                                z-30
+                                            "
+                                            title="Send now"
+                                        >
+                                            <SendIcon size={20} />
+                                        </button>
+                                    </div>
+                                </motion.div>
+                            )}
+
+                            {/* State C: Thinking */}
+                            {status === "thinking" && (
+                                <motion.div
+                                    key="thinking"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    transition={{ duration: 0.3 }}
+                                    className="flex flex-col items-center gap-2 group-hover:opacity-30 transition-opacity"
+                                >
+                                    <span className="text-sm text-surface-500 dark:text-white/70 font-medium">
+                                        Thinking...
+                                    </span>
+                                    <div className="flex gap-1">
+                                        <span className="w-2 h-2 bg-accent rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                                        <span className="w-2 h-2 bg-accent rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                                        <span className="w-2 h-2 bg-accent rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                                    </div>
+                                </motion.div>
+                            )}
+
+                            {/* State D: Speaking - Blue waveform */}
+                            {status === "speaking" && (
+                                <motion.div
+                                    key="speaking"
+                                    initial={{ opacity: 0, scale: 0.9 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.9 }}
+                                    transition={{ duration: 0.3 }}
+                                    className="flex flex-col items-center gap-2 group-hover:opacity-30 transition-opacity"
+                                >
+                                    <span className="text-sm text-surface-500 dark:text-white/70 font-medium">
+                                        Speaking...
+                                    </span>
+                                    <div className="h-10 w-64 flex items-center justify-center">
+                                        <AudioWaveform isActive={true} color="#06b6d4" />
+                                    </div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
                     </div>
-
-                    {/* Interim Transcript (Live Speech to Text) */}
-                    {interimText && status === "listening" && (
-                        <div className="absolute bottom-48 w-full max-w-2xl px-4 text-center animate-fade-in-up">
-                            <p className="text-xl font-medium text-surface-900 dark:text-white/90 leading-relaxed drop-shadow-sm">
-                                {interimText}
-                            </p>
-                        </div>
-                    )}
-
-                    <AnimatePresence mode="wait">
-                        {/* State A: Idle - Large mic button only */}
-                        {status === "ready" && (
-                            <motion.div
-                                key="idle"
-                                initial={{ opacity: 0, scale: 0.8 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.8 }}
-                                transition={{ duration: 0.3 }}
-                                className="flex items-center justify-center"
-                            >
-                                <MicButton
-                                    isListening={false}
-                                    onClick={handleMicToggle}
-                                    disabled={false}
-                                />
-                            </motion.div>
-                        )}
-
-                        {/* State B: Listening - Waveform + text */}
-                        {status === "listening" && (
-                            <motion.div
-                                key="listening"
-                                initial={{ opacity: 0, scale: 0.9 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.9 }}
-                                transition={{ duration: 0.3 }}
-                                className="flex flex-col items-center gap-2 group-hover:opacity-30 transition-opacity"
-                            >
-                                <span className="text-sm text-surface-500 dark:text-white/70 font-medium">
-                                    Listening...
-                                </span>
-                                <div className="h-10 w-72 flex items-center justify-center">
-                                    <AudioWaveform isActive={true} color="#ef4444" />
-                                </div>
-                            </motion.div>
-                        )}
-
-                        {/* State C: Thinking */}
-                        {status === "thinking" && (
-                            <motion.div
-                                key="thinking"
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
-                                transition={{ duration: 0.3 }}
-                                className="flex flex-col items-center gap-2 group-hover:opacity-30 transition-opacity"
-                            >
-                                <span className="text-sm text-surface-500 dark:text-white/70 font-medium">
-                                    Thinking...
-                                </span>
-                                <div className="flex gap-1">
-                                    <span className="w-2 h-2 bg-accent rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                                    <span className="w-2 h-2 bg-accent rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                                    <span className="w-2 h-2 bg-accent rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                                </div>
-                            </motion.div>
-                        )}
-
-                        {/* State D: Speaking - Blue waveform */}
-                        {status === "speaking" && (
-                            <motion.div
-                                key="speaking"
-                                initial={{ opacity: 0, scale: 0.9 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.9 }}
-                                transition={{ duration: 0.3 }}
-                                className="flex flex-col items-center gap-2 group-hover:opacity-30 transition-opacity"
-                            >
-                                <span className="text-sm text-surface-500 dark:text-white/70 font-medium">
-                                    Speaking...
-                                </span>
-                                <div className="h-10 w-72 flex items-center justify-center">
-                                    <AudioWaveform isActive={true} color="#06b6d4" />
-                                </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
-                </button>
+                ) : (
+                    <div className="
+                        relative flex items-center
+                        w-80 h-32 px-4 py-4
+                        rounded-3xl
+                        bg-surface-50/50 dark:bg-white/5 backdrop-blur-md
+                        border border-black/10 dark:border-white/10
+                        overflow-hidden
+                        transition-all duration-300
+                        focus-within:ring-4 focus-within:ring-accent/20
+                    ">
+                        <textarea
+                            value={manualText}
+                            onChange={(e) => setManualText(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    if (manualText.trim()) {
+                                        processTranscript(manualText);
+                                        setManualText("");
+                                    }
+                                }
+                            }}
+                            placeholder="Type a message..."
+                            className="
+                                w-full h-full
+                                bg-transparent
+                                border-none outline-none resize-none
+                                text-surface-900 dark:text-white
+                                placeholder:text-surface-400 dark:placeholder:text-white/30
+                                text-lg font-medium
+                                scrollbar-hide
+                                pr-10
+                            "
+                            autoFocus
+                        />
+                        <button
+                            onClick={() => {
+                                if (manualText.trim()) {
+                                    processTranscript(manualText);
+                                    setManualText("");
+                                }
+                            }}
+                            disabled={!manualText.trim()}
+                            aria-label="Send message"
+                            className="
+                                absolute bottom-3 right-3
+                                p-3 rounded-full
+                                bg-accent text-white
+                                hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
+                                transition-all
+                                shadow-sm
+                                active:scale-95
+                            "
+                        >
+                            <SendIcon size={24} />
+                        </button>
+                    </div>
+                )}
 
                 {/* Subtitle Text - Below control dock */}
-                <p
+                <div
                     className={`
-                        max-w-2xl text-center text-xl font-medium text-surface-900 dark:text-white
+                        max-w-2xl w-full text-center text-xl font-medium text-surface-900 dark:text-white
                         drop-shadow-md
                         transition-opacity duration-1000 ease-out
+                        max-h-[30vh] overflow-y-auto px-4 scrollbar-thin scrollbar-thumb-surface-300 dark:scrollbar-thumb-white/20
                         ${showText || isActive ? "opacity-100" : "opacity-0"}
                     `}
                 >
                     {getDisplayText()}
-                </p>
+                </div>
             </main>
 
             {/* Chat View Overlay */}

@@ -119,8 +119,11 @@ export function useChatAPI(): UseChatAPIReturn {
           const text = decoder.decode(value, { stream: true });
           for (const line of text.split("\n")) {
             if (!line.startsWith("data: ")) continue;
-            const data = line.slice(6).trim();
-            if (data === "[DONE]") continue;
+            // slicing off "data: "
+            const data = line.slice(6);
+
+            // Check for control messages
+            if (data.trim() === "[DONE]") continue;
             if (data.startsWith("[ERROR]")) {
               throw new Error(data.slice(8).trim() || "Server streaming error");
             }
