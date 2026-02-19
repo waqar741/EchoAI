@@ -35,7 +35,7 @@ export const useChatStore = create<ChatState>()(
       messages: [],
       interimText: "",
       avatarType: "gif",
-      avatarId: "robo",
+      avatarId: "dashrath",
       theme: "system",
 
       setStatus: (status) => set({ status }),
